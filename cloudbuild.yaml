@@ -1,0 +1,79 @@
+steps:
+  - id: 'install-dependencies'
+    name: 'ghcr.io/astral-sh/uv:bookworm-slim'
+    entrypoint: 'uv'
+    args: ['sync', '--frozen']
+
+  - id: 'build-wheel'
+    name: 'ghcr.io/astral-sh/uv:bookworm-slim'
+    entrypoint: 'uv'
+    args: ['build', '--wheel', '--out-dir', '.']
+
+  - id: 'deploy-agent'
+    name: 'ghcr.io/astral-sh/uv:bookworm-slim'
+    entrypoint: 'uv'
+    args: ['run', 'deploy']
+    env:
+      - 'GOOGLE_GENAI_USE_VERTEXAI=${_GOOGLE_GENAI_USE_VERTEXAI}'
+      - 'GOOGLE_CLOUD_PROJECT=${_GOOGLE_CLOUD_PROJECT}'
+      - 'GOOGLE_CLOUD_LOCATION=${_GOOGLE_CLOUD_LOCATION}'
+      - 'GOOGLE_CLOUD_STORAGE_BUCKET=${_GOOGLE_CLOUD_STORAGE_BUCKET}'
+      - 'GCS_DIR_NAME=${_GCS_DIR_NAME}'
+      - 'AGENT_NAME=${_AGENT_NAME}'
+      - 'AGENT_DISPLAY_NAME=${_AGENT_DISPLAY_NAME}'
+      - 'AGENT_DESCRIPTION=${_AGENT_DESCRIPTION}'
+      - 'AGENT_ENGINE_ID=${_AGENT_ENGINE_ID}'
+      - 'LOG_LEVEL=${_LOG_LEVEL}'
+      - 'OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT=${_OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT}'
+
+  - id: 'register-agentspace'
+    name: 'ghcr.io/astral-sh/uv:bookworm-slim'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        if [ -n "${_AGENTSPACE_APP_ID}" ]; then
+          echo "🔗 Registering agent with Agentspace..."
+          uv run register
+        else
+          echo "🚫 AGENTSPACE_APP_ID not set, skipping Agentspace registration"
+        fi
+    env:
+      - 'GOOGLE_GENAI_USE_VERTEXAI=${_GOOGLE_GENAI_USE_VERTEXAI}'
+      - 'GOOGLE_CLOUD_PROJECT=${_GOOGLE_CLOUD_PROJECT}'
+      - 'GOOGLE_CLOUD_LOCATION=${_GOOGLE_CLOUD_LOCATION}'
+      - 'AGENT_DISPLAY_NAME=${_AGENT_DISPLAY_NAME}'
+      - 'AGENT_DESCRIPTION=${_AGENT_DESCRIPTION}'
+      - 'AGENT_ENGINE_ID=${_AGENT_ENGINE_ID}'
+      - 'AGENTSPACE_APP_ID=${_AGENTSPACE_APP_ID}'
+      - 'AGENTSPACE_APP_LOCATION=${_AGENTSPACE_APP_LOCATION}'
+
+options:
+  logging: 'LEGACY'
+  defaultLogsBucketBehavior: 'REGIONAL_USER_OWNED_BUCKET'
+  automapSubstitutions: true
+  dynamicSubstitutions: true
+
+substitutions:
+  # Required variables - values must be passed by command-line or build trigger
+  # _GOOGLE_GENAI_USE_VERTEXAI
+  # _GOOGLE_CLOUD_PROJECT
+  # _GOOGLE_CLOUD_LOCATION
+  # _GOOGLE_CLOUD_STORAGE_BUCKET
+  # _GCS_DIR_NAME
+  # _AGENT_NAME
+  
+  # Optional variables for the Agent Engine name and description (both default to "ADK Agent")
+  _AGENT_DISPLAY_NAME: ''
+  _AGENT_DESCRIPTION: ''
+  
+  # Optional variable to update a deployed Agent Engine instance
+  _AGENT_ENGINE_ID: ''
+
+  # Optional Agent application runtime environment variables
+  _LOG_LEVEL: 'INFO'
+  _OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT: 'true'
+  
+  # Optional variables to register an Agent Engine instance with an Agentspace app
+  _AGENTSPACE_APP_ID: ''
+  _AGENTSPACE_APP_LOCATION: ''

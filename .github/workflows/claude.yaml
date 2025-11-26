@@ -1,0 +1,113 @@
+name: Claude PR Assistant
+
+on:
+  issue_comment:
+    types: [created]
+  pull_request_review_comment:
+    types: [created]
+  issues:
+    types: [opened, assigned]
+  pull_request_review:
+    types: [submitted]
+  pull_request:
+    types: [opened]
+
+jobs:
+  claude-auto-review:
+    if: github.event_name == 'pull_request' && github.event.action == 'opened'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+      id-token: write 
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 1
+
+      - name: Authenticate to Google Cloud
+        id: auth
+        uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      
+      - name: Run Claude Auto Review
+        uses: anthropics/claude-code-action@beta
+        with:
+          direct_prompt: |
+            Please provide a comprehensive code review of this pull request. Focus on:
+            - Code quality and best practices
+            - Security considerations
+            - Performance implications
+            - Documentation and testing completeness
+            
+            Provide specific, actionable feedback with line-by-line suggestions where appropriate.
+          timeout_minutes: "60"
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          use_vertex: "true"
+          model: "claude-3-7-sonnet@20250219"
+        env:
+          ANTHROPIC_VERTEX_PROJECT_ID: ${{ steps.auth.outputs.project_id }}
+          CLOUD_ML_REGION: us-east5
+          VERTEX_REGION_CLAUDE_3_7_SONNET: us-east5
+
+  claude-manual-trigger:
+    if: |
+      (github.event_name == 'issue_comment' && contains(github.event.comment.body, '@claude')) ||
+      (github.event_name == 'pull_request_review_comment' && contains(github.event.comment.body, '@claude')) ||
+      (github.event_name == 'pull_request_review' && contains(github.event.review.body, '@claude')) ||
+      (github.event_name == 'issues' && contains(github.event.issue.body, '@claude'))
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+      id-token: write 
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 1
+
+      - name: Authenticate to Google Cloud
+        id: auth
+        uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+      
+      - name: Run Claude Manual Action
+        uses: anthropics/claude-code-action@beta
+        with:
+          trigger_phrase: "@claude"
+          timeout_minutes: "60"
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          use_vertex: "true"
+          model: "claude-3-7-sonnet@20250219"
+        env:
+          ANTHROPIC_VERTEX_PROJECT_ID: ${{ steps.auth.outputs.project_id }}
+          CLOUD_ML_REGION: us-east5
+          VERTEX_REGION_CLAUDE_3_7_SONNET: us-east5
+
+# Claude Code Github Action
+# https://docs.anthropic.com/en/docs/claude-code/github-actions
+# https://github.com/marketplace/actions/claude-code-action-official
+# https://github.com/anthropics/claude-code-action
+# 
+# Github checkout action
+# https://github.com/actions/checkout
+# 
+# GitHub Google Authenticate action
+# https://github.com/google-github-actions/auth
+# 
+# Google Cloud Workload Identity Federation with a dedicated service account
+# https://cloud.google.com/iam/docs/workload-identity-federation-with-deployment-pipelines#github-actions_1
+# https://github.com/google-github-actions/auth?tab=readme-ov-file#workload-identity-federation-through-a-service-account
+# 
+# Configure Repository Secrets
+# Set the GitHub Actions > Repository secrets GCP_WORKLOAD_IDENTITY_PROVIDER to the workload ID federation principal identifier
+# Set the GitHub Actions > Repository secrets GCP_SERVICE_ACCOUNT to the workload ID federation target service account address

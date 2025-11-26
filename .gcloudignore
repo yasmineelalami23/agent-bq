@@ -1,0 +1,33 @@
+# https://cloud.google.com/sdk/gcloud/reference/topic/gcloudignore
+# gcloud meta list-files-for-upload
+
+# Unit tests
+tests/
+test/
+pytest.ini
+
+# Git
+**/.git
+**/.git/*
+
+# Local temporary directory
+**/.tmp
+
+# MacOS
+.DS_Store
+
+# VSCode
+.vscode/
+
+# Custom patterns
+.github/
+assets/
+docs/
+.env.example
+.gcloudignore
+.gitignore
+LICENSE
+# `uv` throws an error if the README.md file is missing
+
+# Everything from .gitignore
+#!include:.gitignore

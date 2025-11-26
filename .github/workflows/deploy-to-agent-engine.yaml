@@ -1,0 +1,96 @@
+name: Deploy to Agent Engine
+
+on:
+  workflow_dispatch:
+  workflow_call:
+  push:
+    branches:
+      - main
+    paths:
+      - "src/**"
+      - "terraform/**"
+      - "uv.lock"
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: "read"
+      id-token: "write"
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Authenticate to Google Cloud
+        id: auth
+        uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+          create_credentials_file: true
+          token_format: "access_token"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.8.21"
+          python-version: "3.13"
+
+      - name: Install the project
+        id: install-dependencies
+        # Ref: https://docs.astral.sh/uv/concepts/projects/sync/#automatic-lock-and-sync
+        run: uv sync --locked
+
+      - name: Build the project
+        id: build-wheel
+        run: uv build --wheel --out-dir .
+
+      - name: Deploy the Agent
+        id: deploy-agent
+        run: uv run deploy
+        env:
+          PYTHONUNBUFFERED: "1"
+          GOOGLE_GENAI_USE_VERTEXAI: ${{ vars.GOOGLE_GENAI_USE_VERTEXAI }}
+          GOOGLE_CLOUD_PROJECT: ${{ vars.GOOGLE_CLOUD_PROJECT }}
+          GOOGLE_CLOUD_LOCATION: ${{ vars.GOOGLE_CLOUD_LOCATION }}
+          GOOGLE_CLOUD_STORAGE_BUCKET: ${{ vars.GOOGLE_CLOUD_STORAGE_BUCKET }}
+          GCS_DIR_NAME: ${{ vars.GCS_DIR_NAME }}
+          AGENT_NAME: ${{ vars.AGENT_NAME }}
+          AGENT_DISPLAY_NAME: ${{ vars.AGENT_DISPLAY_NAME }}
+          AGENT_DESCRIPTION: ${{ vars.AGENT_DESCRIPTION }}
+          AGENT_ENGINE_ID: ${{ vars.AGENT_ENGINE_ID }}
+          LOG_LEVEL: ${{ vars.LOG_LEVEL }}
+          OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT: ${{ vars.OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT }}
+
+      - name: Register with Agentspace
+        id: register-agentspace
+        run: |
+          if [ -n "${AGENTSPACE_APP_ID}" ] && [ -n "${AGENTSPACE_APP_LOCATION}" ] && [ -n "${AGENT_ENGINE_ID}" ]; then
+            echo "🔗 Registering agent with Agentspace..."
+            uv run register
+          else
+            echo "🚫 Agentspace registration skipped - requires AGENTSPACE_APP_ID, AGENTSPACE_APP_LOCATION, and AGENT_ENGINE_ID"
+          fi
+        env:
+          PYTHONUNBUFFERED: "1"
+          GOOGLE_GENAI_USE_VERTEXAI: ${{ vars.GOOGLE_GENAI_USE_VERTEXAI }}
+          GOOGLE_CLOUD_PROJECT: ${{ vars.GOOGLE_CLOUD_PROJECT }}
+          GOOGLE_CLOUD_LOCATION: ${{ vars.GOOGLE_CLOUD_LOCATION }}
+          # AGENT_NAME is required by RegisterEnv (inherits from BaseEnv) but unused in registration logic
+          AGENT_NAME: ${{ vars.AGENT_NAME }}
+          AGENT_DISPLAY_NAME: ${{ vars.AGENT_DISPLAY_NAME }}
+          AGENT_DESCRIPTION: ${{ vars.AGENT_DESCRIPTION }}
+          AGENT_ENGINE_ID: ${{ vars.AGENT_ENGINE_ID }}
+          AGENTSPACE_APP_ID: ${{ vars.AGENTSPACE_APP_ID }}
+          AGENTSPACE_APP_LOCATION: ${{ vars.AGENTSPACE_APP_LOCATION }}
+          GCP_ACCESS_TOKEN: ${{ steps.auth.outputs.access_token}}
+
+# Google Cloud Workload Identity Federation with a dedicated service account - REQUIRED to generate OAuth 2.0 tokens
+# https://cloud.google.com/iam/docs/workload-identity-federation-with-deployment-pipelines#github-actions_1
+# https://github.com/google-github-actions/auth?tab=readme-ov-file#workload-identity-federation-through-a-service-account
+# 
+# Configure Repository Secrets
+# Set the GitHub Actions > Repository secrets GCP_WORKLOAD_IDENTITY_PROVIDER to the workload ID federation principal identifier
+# Set the GitHub Actions > Repository secrets GCP_SERVICE_ACCOUNT to the workload ID federation target service account address
