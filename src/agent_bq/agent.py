@@ -16,9 +16,9 @@ import google.auth
 
 logging_callbacks = LoggingCallbacks()
 
-PROJECT_ID = os.getenv("search-ahmed")
-if PROJECT_ID:
-    os.environ["GOOGLE_CLOUD_PROJECT"] = PROJECT_ID
+PROJECT_ID = os.getenv("GOOGLE_CLOUD_PROJECT", "search-ahmed")
+os.environ["GOOGLE_CLOUD_PROJECT"] = PROJECT_ID
+os.environ["GOOGLE_CLOUD_QUOTA_PROJECT"] = PROJECT_ID
 
 credentials, _ = google.auth.default()
 tool_config = BigQueryToolConfig(write_mode=WriteMode.BLOCKED)
@@ -26,7 +26,7 @@ credentials_config = BigQueryCredentialsConfig(credentials=credentials)
 bigquery_toolset = BigQueryToolset(
     credentials_config=credentials_config, bigquery_tool_config=tool_config
 )
-#test
+
 root_agent = LlmAgent(
     name="bigquery_agent",
     description="Agent to answer questions about BigQuery data and models and execute SQL queries.",

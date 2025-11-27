@@ -41,7 +41,6 @@ def get_weather(city: str, tool_context: ToolContext) -> dict:
             "status": "error",
             "error_message": f"Weather information for '{city}' is not available.",
         }
-#test
 
 def get_current_time(city: str, tool_context: ToolContext) -> dict:
     """Get the current time in a specified city.
