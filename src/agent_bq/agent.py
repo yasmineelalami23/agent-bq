@@ -7,8 +7,6 @@ from google.adk.tools.bigquery import BigQueryCredentialsConfig
 from google.adk.tools.bigquery import BigQueryToolset
 from google.adk.tools.bigquery.config import BigQueryToolConfig
 from google.adk.tools.bigquery.config import WriteMode
-
-
 from .callbacks import LoggingCallbacks
 from .prompt import return_global_instruction, return_instructions_root
 from .tools import get_current_time, get_weather
