@@ -64,6 +64,8 @@ jobs:
           AGENT_ENGINE_ID: ${{ vars.AGENT_ENGINE_ID }}
           LOG_LEVEL: ${{ vars.LOG_LEVEL }}
           OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT: ${{ vars.OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT }}
+          OANDA_ACCOUNT_ID: ${{ secrets.OANDA_ACCOUNT_ID }} # Use secrets if it is sensitive
+          OANDA_API_KEY: ${{ secrets.OANDA_API_KEY }}
 
       - name: Register with Agentspace
         id: register-agentspace

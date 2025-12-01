@@ -9,6 +9,7 @@ import asyncio
 import json
 import os
 from typing import Any
+from urllib.parse import urlencode
 
 import google.auth
 import httpx
@@ -179,6 +180,86 @@ async def get_agents_data(env: RegisterEnv, headers: dict[str, str]) -> AgentsRe
     return agents_data
 
 
+async def register_authorization(env: RegisterEnv, headers: dict[str, str]) -> None:
+    """Register or Update the OAuth Authorization configuration for the Agent.
+    
+    This configures the agent to use Google OAuth V2 with specific parameters
+    required for BigQuery and proper Agent Engine authorization (response_type=code).
+    """
+    print("🔐 Configuring OAuth Authorization...")
+
+    # 1. Retrieve Client Credentials from Environment
+    try:
+        client_id = os.environ["GOOGLE_CLIENT_ID"]
+        client_secret = os.environ["GOOGLE_CLIENT_SECRET"]
+    except KeyError as e:
+        print(f"❌ Missing required environment variable for OAuth: {e}")
+        print("⚠️ Skipping Authorization configuration. Agent may not authenticate correctly.")
+        return
+
+    # 2. Define Scopes (BigQuery + Email)
+    scopes = "https://www.googleapis.com/auth/bigquery https://www.googleapis.com/auth/userinfo.email"
+
+    # 3. Build Authorization URL (V2 Endpoint + Specific Params)
+    base_auth_url = "https://accounts.google.com/o/oauth2/v2/auth"
+    
+    # We explicitly include 'response_type' and 'access_type' here
+    # to fix "Missing parameter: response_type" errors and ensure refresh tokens.
+    params = {
+        "access_type": "offline",
+        "prompt": "consent",
+        "scope": scopes,
+        "response_type": "code",
+    }
+    
+    full_auth_uri = f"{base_auth_url}?{urlencode(params)}"
+
+    # 4. Construct the Payload
+    # Note: We need to derive the authorizations endpoint from the agent endpoint
+    # env.endpoint is usually ".../agents". We need ".../authorizations"
+    # We assume env.endpoint ends in "/agents"
+    base_app_url = env.endpoint.rsplit("/", 1)[0]
+    auth_endpoint = f"{base_app_url}/authorizations"
+    auth_id = "google-oauth" # Standard ID for this agent's auth
+
+    payload = {
+        "name": f"{base_app_url.split('v1alpha/')[1]}/authorizations/{auth_id}",
+        "serverSideOauth2": {
+            "clientId": client_id,
+            "clientSecret": client_secret,
+            "authorizationUri": full_auth_uri,
+            "tokenUri": "https://oauth2.googleapis.com/token",
+        },
+    }
+
+    print(f"📦 Auth Payload Configured for: {auth_id}")
+
+    # 5. Send Request (Use PATCH to update if exists, or POST if creating new logic is needed)
+    # Using POST with specific ID often works as create/replace in this API, 
+    # but check if we need to query existence first. For simplicity, we try creating/updating.
+    
+    # We will use the specific resource URL for PATCH (update)
+    specific_auth_url = f"{auth_endpoint}/{auth_id}?allowMissing=true"
+
+    try:
+        async with httpx.AsyncClient() as client:
+            # We use PATCH with allowMissing=true to handle both create and update
+            response = await client.patch(
+                specific_auth_url, headers=headers, json=payload, timeout=30.0
+            )
+            response.raise_for_status()
+            print("✅ Authorization configuration updated successfully!")
+            
+    except httpx.HTTPStatusError as err:
+        print(f"❌ 🌐 OAuth Configuration Failed: {err}")
+        print(f"Response content: {err.response.text}")
+        # We do not exit(1) here to allow the script to finish if the agent was registered
+    except httpx.RequestError as err:
+        print(f"❌ ⚠️ OAuth Request Error: {err}")
+
+    return
+
+
 async def register() -> None:
     """Register the agent with the Agentspace App.
 
@@ -211,50 +292,54 @@ async def register() -> None:
     )
 
     if existing_agent:
-        print(f"🤖 Agent {env.agent_engine_id} is already registered, skipping ...")
-        return
+        print(f"🤖 Agent {env.agent_engine_id} is already registered, skipping creation...")
     else:
         print(f"📭 Agent {env.agent_engine_id} not found, registering...")
 
-    # Prepare the Agent definition JSON Payload
-    payload = {
-        "displayName": env.agent_display_name,
-        "description": env.agent_description,
-        "adk_agent_definition": {
-            "tool_settings": {
-                "tool_description": env.agent_description,
+        # Prepare the Agent definition JSON Payload
+        payload = {
+            "displayName": env.agent_display_name,
+            "description": env.agent_description,
+            "adk_agent_definition": {
+                "tool_settings": {
+                    "tool_description": env.agent_description,
+                },
+                "provisioned_reasoning_engine": {
+                    "reasoning_engine": env.reasoning_engine,
+                },
             },
-            "provisioned_reasoning_engine": {
-                "reasoning_engine": env.reasoning_engine,
-            },
-        },
-    }
+        }
 
-    print(f"📦 Payload:\n{json.dumps(payload, indent=2)}")
+        print(f"📦 Payload:\n{json.dumps(payload, indent=2)}")
 
-    # Register the Agent
-    print(f"🔗 Registering Agent: {env.agent_display_name}...")
+        # Register the Agent
+        print(f"🔗 Registering Agent: {env.agent_display_name}...")
 
-    try:
-        async with httpx.AsyncClient() as client:
-            response = await client.post(
-                env.endpoint, headers=headers, json=payload, timeout=30.0
-            )
-            response.raise_for_status()
-            print("✅ Agent registered successfully!")
-    except httpx.HTTPStatusError as err:
-        print(f"❌ 🌐 HTTP error occurred: {err}")
-        print(f"Response content: {err.response.text}")
-        exit(1)
-    except httpx.ConnectError as err:
-        print(f"❌ 🔌 Connection error occurred: {err}")
-        exit(1)
-    except httpx.TimeoutException as err:
-        print(f"❌ ⏱️ Timeout error occurred: {err}")
-        exit(1)
-    except httpx.RequestError as err:
-        print(f"❌ ⚠️ An unexpected error occurred: {err}")
-        exit(1)
+        try:
+            async with httpx.AsyncClient() as client:
+                response = await client.post(
+                    env.endpoint, headers=headers, json=payload, timeout=30.0
+                )
+                response.raise_for_status()
+                print("✅ Agent registered successfully!")
+        except httpx.HTTPStatusError as err:
+            print(f"❌ 🌐 HTTP error occurred: {err}")
+            print(f"Response content: {err.response.text}")
+            exit(1)
+        except httpx.ConnectError as err:
+            print(f"❌ 🔌 Connection error occurred: {err}")
+            exit(1)
+        except httpx.TimeoutException as err:
+            print(f"❌ ⏱️ Timeout error occurred: {err}")
+            exit(1)
+        except httpx.RequestError as err:
+            print(f"❌ ⚠️ An unexpected error occurred: {err}")
+            exit(1)
+
+    # --- NEW STEP: Register/Update Authorization ---
+    # We call this regardless of whether the agent was just created or already existed,
+    # to ensure the OAuth settings are always up to date.
+    await register_authorization(env, headers)
 
     return
 

@@ -7,64 +7,40 @@ architecture for additional locations.
 
 import datetime
 import logging
-from zoneinfo import ZoneInfo
+from zoneinfo import ZoneInfo       # <--- ADD THIS
+import requests
 
 from google.adk.tools import ToolContext
 
 logger = logging.getLogger(__name__)
 
 
-def get_weather(city: str, tool_context: ToolContext) -> dict:
-    """Get the current weather report for a specified city.
-
-    Args:
-        city (str): The name of the city for which to retrieve the weather report.
-        tool_context (ToolContext): Context for the tool invocation.
-
-    Returns:
-        dict: status and result or error msg.
+def get_oanda_pricing(instruments: str, account_id: str, api_token: str) -> dict:
     """
-    logger.info(
-        f"Getting weather for city: '{city}'...",
-        extra={"invocation_id": tool_context.invocation_id},
-    )
-    if city.lower() == "new york":
-        return {
-            "status": "success",
-            "report": (
-                "The weather in New York is sunny with a temperature of 25 degrees"
-                " Celsius (77 degrees Fahrenheit)."
-            ),
-        }
-    else:
-        return {
-            "status": "error",
-            "error_message": f"Weather information for '{city}' is not available.",
-        }
-
-def get_current_time(city: str, tool_context: ToolContext) -> dict:
-    """Get the current time in a specified city.
-
-    Args:
-        city (str): The name of the city for which to retrieve the current time.
-        tool_context (ToolContext): Context for the tool invocation.
-
-    Returns:
-        dict: status and result or error msg.
+    Retrieves real-time pricing for specific financial instruments from OANDA.
     """
-    logger.info(
-        f"Getting current time for city: '{city}'...",
-        extra={"invocation_id": tool_context.invocation_id},
-    )
-    if city.lower() == "new york":
-        tz_identifier = "America/New_York"
-    else:
-        return {
-            "status": "error",
-            "error_message": (f"Sorry, I don't have timezone information for {city}."),
-        }
+    
+    # Check if keys are missing (Basic validation)
+    if not account_id or not api_token:
+        return {"error": "Missing user credentials (Account ID or Token)."}
 
-    tz = ZoneInfo(tz_identifier)
-    now = datetime.datetime.now(tz)
-    report = f"The current time in {city} is {now.strftime('%Y-%m-%d %H:%M:%S %Z')}"
-    return {"status": "success", "report": report}
+    # Define the Endpoint
+    base_url = "https://api-fxpractice.oanda.com" 
+    endpoint = f"{base_url}/v3/accounts/{account_id}/pricing"
+
+    # Set Headers using the passed argument
+    headers = {
+        "Authorization": f"Bearer {api_token}",
+        "Content-Type": "application/json"
+    }
+
+    params = {
+        "instruments": instruments
+    }
+
+    try:
+        response = requests.get(endpoint, headers=headers, params=params)
+        response.raise_for_status()
+        return response.json()
+    except requests.exceptions.RequestException as e:
+        return {"error": str(e)}
