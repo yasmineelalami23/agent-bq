@@ -496,23 +496,25 @@ async def create_authorization() -> None:
     oauth_audience = os.getenv("OAUTH_AUDIENCE", "")
     oauth_prompt = os.getenv("OAUTH_PROMPT", "consent")  # Default to consent for refresh tokens
 
-    # Build authorization URL with parameters
-    # Note: Agentspace will add client_id, redirect_uri, state, and response_type automatically
-    params = {}
+    # Build authorization URL with ALL required parameters
+    # Google OAuth requires: response_type, scope, and optionally prompt
+    params = {
+        "response_type": "code",  # REQUIRED - tells OAuth to return an authorization code
+        "scope": oauth_scopes,    # REQUIRED - permissions being requested
+    }
     
-    # Scope is REQUIRED for OAuth to work
-    params["scope"] = oauth_scopes
+    if oauth_prompt:
+        params["prompt"] = oauth_prompt
     
     if oauth_audience:
         params["audience"] = oauth_audience
-    if oauth_prompt:
-        params["prompt"] = oauth_prompt
 
     # Construct URL with encoded parameters
     auth_url = f"{oauth_auth_uri}?{urlencode(params)}"
     
     print(f"ℹ️  OAuth Scopes: {oauth_scopes}")
     print(f"ℹ️  OAuth Prompt: {oauth_prompt}")
+    print(f"ℹ️  Authorization URL: {auth_url}")
 
     payload = {
         "name": f"projects/{PROJECT}/locations/{auth_location}/authorizations/{auth_id}",
