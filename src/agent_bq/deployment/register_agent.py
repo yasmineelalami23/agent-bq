@@ -1,6 +1,6 @@
-"""Agent registration module for Google Cloud Discovery Engine Agentspace.
+"""Agent registration module for BigQuery ADK Agent with Google Cloud Discovery Engine Agentspace.
 
-This module handles the registration of deployed Agent Engine instances with
+This module handles the registration of deployed BigQuery Agent Engine instances with
 Discovery Engine Agentspace applications. Includes authentication, duplicate
 detection, and RESTful API integration with the Discovery Engine API.
 """
@@ -13,13 +13,67 @@ from urllib.parse import urlencode
 
 import google.auth
 import httpx
+from dotenv import load_dotenv
 from google.auth.credentials import Credentials
 from google.auth.exceptions import DefaultCredentialsError, RefreshError
 from google.auth.transport.requests import Request
 from pydantic import BaseModel, Field
 
+load_dotenv()
 
-from .config import RegisterEnv, initialize_environment
+# Required environment variables
+try:
+    PROJECT = os.environ["GOOGLE_CLOUD_PROJECT"]
+    LOCATION = os.environ["GOOGLE_CLOUD_LOCATION"]
+    AGENT_ENGINE_ID = os.environ["AGENT_ENGINE_ID"]
+    AGENTSPACE_APP_ID = os.environ["AGENTSPACE_APP_ID"]
+    AGENTSPACE_APP_LOCATION = os.environ["AGENTSPACE_APP_LOCATION"]
+
+except KeyError as e:
+    print(f"❌ Missing required environment variable: {e}")
+    print("Please ensure the following variables are set:")
+    print("- GOOGLE_CLOUD_PROJECT")
+    print("- GOOGLE_CLOUD_LOCATION")
+    print("- AGENT_ENGINE_ID")
+    print("- AGENTSPACE_APP_ID")
+    print("- AGENTSPACE_APP_LOCATION")
+    exit(1)
+
+# Optional environment variables
+API_VERSION = os.getenv("API_VERSION", "v1alpha")
+AGENT_DISPLAY_NAME = os.getenv("AGENT_DISPLAY_NAME", "BigQuery Analytics Agent")
+AGENT_DESCRIPTION = os.getenv(
+    "AGENT_DESCRIPTION",
+    "AI-powered agent for querying and analyzing BigQuery datasets"
+)
+
+# Construct the Reasoning Engine ID
+REASONING_ENGINE = (
+    f"projects/{PROJECT}/locations/{LOCATION}/reasoningEngines/{AGENT_ENGINE_ID}"
+)
+
+# Construct the API Endpoint
+if AGENTSPACE_APP_LOCATION == "global":
+    SERVER = "discoveryengine.googleapis.com"
+else:
+    SERVER = f"{AGENTSPACE_APP_LOCATION}-discoveryengine.googleapis.com"
+
+ENDPOINT = (
+    f"https://{SERVER}/{API_VERSION}/projects/{PROJECT}/locations/{AGENTSPACE_APP_LOCATION}/"
+    f"collections/default_collection/engines/{AGENTSPACE_APP_ID}/assistants/default_assistant/agents"
+)
+
+print("\n\n✅ Environment variables set for BigQuery Agent registration:\n")
+print(f"PROJECT:                 {PROJECT}")
+print(f"LOCATION:                {LOCATION}")
+print(f"API_VERSION:             {API_VERSION}")
+print(f"AGENTSPACE_APP_ID:       {AGENTSPACE_APP_ID}")
+print(f"AGENTSPACE_APP_LOCATION: {AGENTSPACE_APP_LOCATION}")
+print(f"AGENT_ENGINE_ID:         {AGENT_ENGINE_ID}")
+print(f"AGENT_DISPLAY_NAME:      {AGENT_DISPLAY_NAME}")
+print(f"AGENT_DESCRIPTION:       {AGENT_DESCRIPTION}")
+print(f"REASONING_ENGINE:        {REASONING_ENGINE}")
+print(f"ENDPOINT:                {ENDPOINT}\n\n")
 
 
 class ProvisionedEngine(BaseModel):
@@ -75,21 +129,16 @@ class AgentsResponse(BaseModel):
 
 def test_environment() -> None:
     """Test function to validate the registration environment."""
-    _ = initialize_environment(RegisterEnv)
-
     return
 
 
-def setup_environment(env: RegisterEnv) -> dict[str, str]:
+def setup_environment() -> dict[str, str]:
     """Set up the registration environment and return authenticated headers.
 
     Handles:
     - Google Cloud authentication with default credentials
     - Request headers preparation
     - API endpoint logging
-
-    Args:
-        env: RegisterEnv configuration instance.
 
     Returns:
         Dict containing authenticated request headers.
@@ -109,7 +158,7 @@ def setup_environment(env: RegisterEnv) -> dict[str, str]:
         # Authenticate
         try:
             credentials: Credentials
-            credentials, _ = google.auth.default()  # pyright: ignore[reportAssignmentType]
+            credentials, _ = google.auth.default()
             credentials.refresh(Request())
             access_token = credentials.token
         except DefaultCredentialsError as e:
@@ -134,17 +183,16 @@ def setup_environment(env: RegisterEnv) -> dict[str, str]:
     headers = {
         "Authorization": f"Bearer {access_token}",
         "Content-Type": "application/json",
-        "X-Goog-User-Project": env.google_cloud_project,
+        "X-Goog-User-Project": PROJECT,
     }
 
     return headers
 
 
-async def get_agents_data(env: RegisterEnv, headers: dict[str, str]) -> AgentsResponse:
+async def get_agents_data(headers: dict[str, str]) -> AgentsResponse:
     """Return the agents registered with an Agentspace app.
 
     Args:
-        env: RegisterEnv configuration instance.
         headers: Authenticated request headers.
 
     Returns:
@@ -158,7 +206,7 @@ async def get_agents_data(env: RegisterEnv, headers: dict[str, str]) -> AgentsRe
     print("🔍 Getting agent registrations...")
     try:
         async with httpx.AsyncClient() as client:
-            response = await client.get(env.endpoint, headers=headers, timeout=30.0)
+            response = await client.get(ENDPOINT, headers=headers, timeout=30.0)
             response.raise_for_status()
             response_data = response.json()
             agents_data = AgentsResponse.model_validate(response_data)
@@ -181,122 +229,8 @@ async def get_agents_data(env: RegisterEnv, headers: dict[str, str]) -> AgentsRe
     return agents_data
 
 
-
-
-# Ensure you have these imports available in your file
-# from your_module import RegisterEnv (or wherever RegisterEnv is defined)
-
-import os
-import json
-import httpx
-from urllib.parse import urlencode
-
-# Ensure you have 'PROJECT', 'AGENTSPACE_APP_LOCATION', 'API_VERSION' defined 
-# or imported from your config/environment setup in this file.
-
-async def register_authorization(env: RegisterEnv, headers: dict[str, str]) -> None:
-    """Create or Overwrite a Google Authorization resource for BigQuery.
-    
-    Adapted from the Jira/Confluence strategy:
-    1. Checks Env Vars
-    2. Deletes existing auth if present (to avoid 409 conflict/update issues)
-    3. Creates a fresh one with 'POST'
-    """
-    
-    # 1. Check for required environment variables
-    # We use the standard Google Auth variables
-    auth_id = "google-oauth"
-    client_id = os.getenv("GOOGLE_CLIENT_ID", "")
-    client_secret = os.getenv("GOOGLE_CLIENT_SECRET", "")
-    
-    # Validation
-    if not all([client_id, client_secret]):
-        print("❌ Missing required environment variables:")
-        if not client_id: print("   - GOOGLE_CLIENT_ID")
-        if not client_secret: print("   - GOOGLE_CLIENT_SECRET")
-        return
-
-    # 2. Setup Endpoints (Project/Location level)
-    # Note: Authorizations live at Project/Location, NOT inside the Engine/Agent.
-    location_prefix = "" if env.location == "global" else f"{env.location}-"
-    
-    # Base URL for Authorizations
-    base_url = (
-        f"https://{location_prefix}discoveryengine.googleapis.com/v1alpha/"
-        f"projects/{env.project_id}/locations/{env.location}/authorizations"
-    )
-    
-    # Specific Resource URL (for deletion)
-    resource_url = f"{base_url}/{auth_id}"
-    
-    # Creation URL (for POST)
-    create_url = f"{base_url}?authorizationId={auth_id}"
-
-    # 3. Prepare the Manual URL (The "Jira Strategy")
-    # We manually build the URL to ensure 'response_type=code' is present.
-    scopes = "https://www.googleapis.com/auth/bigquery https://www.googleapis.com/auth/userinfo.email openid"
-    
-    params = {
-        "access_type": "offline", # Required for refresh tokens
-        "prompt": "consent",
-        "scope": scopes,
-        "response_type": "code",  # <--- Explicitly adding the missing parameter
-    }
-    
-    # Full URL: https://accounts.google.com/o/oauth2/v2/auth?scope=...&response_type=code...
-    full_auth_uri = f"https://accounts.google.com/o/oauth2/v2/auth?{urlencode(params)}"
-
-    # 4. Construct Payload
-    payload = {
-        "name": f"projects/{env.project_id}/locations/{env.location}/authorizations/{auth_id}",
-        "serverSideOauth2": {
-            "clientId": client_id,
-            "clientSecret": client_secret,
-            "authorizationUri": full_auth_uri, # Using the manually built URL
-            "tokenUri": "https://oauth2.googleapis.com/token",
-            "pkceEnabled": True
-        },
-    }
-
-    print(f"\n🔐 Configuring BigQuery Authorization: {auth_id}")
-    print(f"📍 Create Endpoint: {create_url}")
-
-    async with httpx.AsyncClient() as client:
-        # STEP A: Try to DELETE existing one first (Clean Slate)
-        # This prevents 409 "Already Exists" and 404 "Update failed" errors.
-        try:
-            print("🗑️  Checking for existing authorization to clean up...")
-            del_resp = await client.delete(resource_url, headers=headers, timeout=10.0)
-            if del_resp.status_code == 200:
-                print("   - Existing authorization deleted.")
-            else:
-                print(f"   - No existing authorization found (Status {del_resp.status_code}). Proceeding...")
-        except Exception:
-            print("   - Cleanup check skipped or failed. Proceeding to create.")
-
-        # STEP B: CREATE (POST)
-        try:
-            response = await client.post(
-                create_url, headers=headers, json=payload, timeout=30.0
-            )
-            response.raise_for_status()
-            print(f"✅ Authorization resource '{auth_id}' created successfully!")
-            print(f"📄 Response Scopes count: {len(response.json().get('serverSideOauth2', {}).get('scopes', []))}")
-            
-        except httpx.HTTPStatusError as err:
-            print(f"❌ 🌐 HTTP error occurred: {err}")
-            print(f"Response content: {err.response.text}")
-            # If POST fails, we try PATCH as a fallback just in case
-            if err.response.status_code == 409:
-                print("⚠️  Resource exists (409). Attempting PATCH update...")
-                patch_params = {"updateMask": "serverSideOauth2.authorizationUri,serverSideOauth2.tokenUri,serverSideOauth2.clientId,serverSideOauth2.clientSecret"}
-                patch_resp = await client.patch(resource_url, headers=headers, json=payload, params=patch_params)
-                if patch_resp.status_code == 200:
-                     print("✅ Authorization UPDATED successfully via fallback!")
-
-
 async def register() -> None:
-    """Register the agent with the Agentspace App.
+    """Register the BigQuery agent with the Agentspace App.
 
     Handles the complete registration workflow including:
     - Environment variable validation
@@ -304,83 +238,134 @@ async def register() -> None:
     - Discovery Engine API endpoint construction
     - Duplicate registration detection
     - Agent registration via REST API
+    - Optional OAuth authorization configuration
 
     Raises:
         KeyError: If required environment variables are missing.
         DefaultCredentialsError: If Google Cloud authentication fails.
         SystemExit: If environment validation or authentication fails.
     """
-    # Load and validate environment configuration
-    env = initialize_environment(RegisterEnv)
-
-    headers: dict[str, str] = setup_environment(env)
-    agents_data: AgentsResponse = await get_agents_data(env=env, headers=headers)
+    headers: dict[str, str] = setup_environment()
+    agents_data: AgentsResponse = await get_agents_data(headers=headers)
 
     # Check if the AGENT_ENGINE_ID is already registered
     existing_agent: Agent | None = next(
         (
             agent
             for agent in agents_data.agents
-            if agent.agent_engine_id == env.agent_engine_id
+            if agent.agent_engine_id == AGENT_ENGINE_ID
         ),
         None,
     )
 
     if existing_agent:
-        print(f"🤖 Agent {env.agent_engine_id} is already registered, skipping creation...")
+        print(f"🤖 BigQuery Agent {AGENT_ENGINE_ID} is already registered, skipping ...")
+        return
     else:
-        print(f"📭 Agent {env.agent_engine_id} not found, registering...")
+        print(f"📭 BigQuery Agent {AGENT_ENGINE_ID} not found, registering...")
 
-        # Prepare the Agent definition JSON Payload
-        payload = {
-            "displayName": env.agent_display_name,
-            "description": env.agent_description,
-            "adk_agent_definition": {
-                "tool_settings": {
-                    "tool_description": env.agent_description,
-                },
-                "provisioned_reasoning_engine": {
-                    "reasoning_engine": env.reasoning_engine,
-                },
+    # Check if OAuth is configured (for external service integrations)
+    oauth_client_id = os.getenv("OAUTH_CLIENT_ID", "")
+    oauth_client_secret = os.getenv("OAUTH_CLIENT_SECRET", "")
+    auth_id = os.getenv("AUTH_ID", "")  # Authorization resource ID
+
+    # Prepare the Agent definition JSON Payload for BigQuery agent
+    payload: dict[str, Any] = {
+        "displayName": AGENT_DISPLAY_NAME,
+        "description": AGENT_DESCRIPTION,
+        "adk_agent_definition": {
+            "tool_settings": {
+                "tool_description": AGENT_DESCRIPTION,
             },
-        }
+            "provisioned_reasoning_engine": {
+                "reasoning_engine": REASONING_ENGINE,
+            },
+        },
+    }
 
-        print(f"📦 Payload:\n{json.dumps(payload, indent=2)}")
+    # Add OAuth authorization if configured
+    # For Agentspace-level OAuth, we need to reference the Authorization resource
+    if oauth_client_id and oauth_client_secret and auth_id:
+        print("🔐 OAuth credentials detected")
+        print(f"ℹ️  Using Authorization ID: {auth_id}")
+        print("ℹ️  Agentspace will handle OAuth flow with Authorization resource")
 
-        # Register the Agent
-        print(f"🔗 Registering Agent: {env.agent_display_name}...")
-
+        # Get project number (required for authorization resource path)
         try:
-            async with httpx.AsyncClient() as client:
-                response = await client.post(
-                    env.endpoint, headers=headers, json=payload, timeout=30.0
-                )
-                response.raise_for_status()
-                print("✅ Agent registered successfully!")
-        except httpx.HTTPStatusError as err:
-            print(f"❌ 🌐 HTTP error occurred: {err}")
-            print(f"Response content: {err.response.text}")
-            exit(1)
-        except httpx.ConnectError as err:
-            print(f"❌ 🔌 Connection error occurred: {err}")
-            exit(1)
-        except httpx.TimeoutException as err:
-            print(f"❌ ⏱️ Timeout error occurred: {err}")
-            exit(1)
-        except httpx.RequestError as err:
-            print(f"❌ ⚠️ An unexpected error occurred: {err}")
-            exit(1)
+            import subprocess
 
-    # --- NEW STEP: Register/Update Authorization ---
-    # We call this regardless of whether the agent was just created or already existed,
-    # to ensure the OAuth settings are always up to date.
-    await register_authorization(env, headers)
+            result = subprocess.run(
+                [
+                    "gcloud",
+                    "projects",
+                    "describe",
+                    PROJECT,
+                    "--format=value(projectNumber)",
+                ],
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            project_number = result.stdout.strip()
+
+            if project_number:
+                # Add authorization resource reference
+                # Use the same location as the authorization resource (typically 'global')
+                auth_resource_location = os.getenv("AUTH_LOCATION", "global")
+                auth_resource_path = f"projects/{project_number}/locations/{auth_resource_location}/authorizations/{auth_id}"
+                payload["adk_agent_definition"]["authorizations"] = [auth_resource_path]
+                print(f"✅ Authorization resource path: {auth_resource_path}")
+            else:
+                print(
+                    "⚠️  Warning: Could not get project number, skipping authorization reference"
+                )
+        except (subprocess.CalledProcessError, FileNotFoundError) as e:
+            print(f"⚠️  Warning: Could not get project number: {e}")
+            print("⚠️  Skipping authorization reference in payload")
+    elif oauth_client_id or oauth_client_secret or auth_id:
+        print("⚠️  OAuth partially configured - missing required variables:")
+        if not oauth_client_id:
+            print("   - OAUTH_CLIENT_ID")
+        if not oauth_client_secret:
+            print("   - OAUTH_CLIENT_SECRET")
+        if not auth_id:
+            print("   - AUTH_ID")
+        print("ℹ️  Agent will use service account authentication")
+    else:
+        print("ℹ️  OAuth not configured, agent will use service account authentication")
+
+    print(f"\n📦 Payload:\n{json.dumps(payload, indent=2)}\n")
+
+    # Register the Agent
+    print(f"🔗 Registering BigQuery Agent: {AGENT_DISPLAY_NAME}...")
+
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                ENDPOINT, headers=headers, json=payload, timeout=30.0
+            )
+            response.raise_for_status()
+            print("✅ BigQuery Agent registered successfully!")
+            print("📊 Your agent can now query and analyze BigQuery datasets")
+    except httpx.HTTPStatusError as err:
+        print(f"❌ 🌐 HTTP error occurred: {err}")
+        print(f"Response content: {err.response.text}")
+        exit(1)
+    except httpx.ConnectError as err:
+        print(f"❌ 🔌 Connection error occurred: {err}")
+        exit(1)
+    except httpx.TimeoutException as err:
+        print(f"❌ ⏱️ Timeout error occurred: {err}")
+        exit(1)
+    except httpx.RequestError as err:
+        print(f"❌ ⚠️ An unexpected error occurred: {err}")
+        exit(1)
 
     return
 
 
 async def unregister() -> None:
-    """Unregister the agent from the Agentspace App.
+    """Unregister the BigQuery agent from the Agentspace App.
 
     Finds and removes the agent registration based on AGENT_ENGINE_ID.
     Prompts for user confirmation before proceeding to unregister.
@@ -388,18 +373,15 @@ async def unregister() -> None:
     Raises:
         SystemExit: If user cancels the unregister operation or if it fails.
     """
-    # Load and validate environment configuration
-    env = initialize_environment(RegisterEnv, print_config=False)
-
-    headers: dict[str, str] = setup_environment(env)
-    agents_data: AgentsResponse = await get_agents_data(env=env, headers=headers)
+    headers: dict[str, str] = setup_environment()
+    agents_data: AgentsResponse = await get_agents_data(headers=headers)
 
     # Find the agent to unregister
     agent_to_unregister: Agent | None = next(
         (
             agent
             for agent in agents_data.agents
-            if agent.agent_engine_id == env.agent_engine_id
+            if agent.agent_engine_id == AGENT_ENGINE_ID
         ),
         None,
     )
@@ -407,35 +389,33 @@ async def unregister() -> None:
     # Exit if the AGENT_ENGINE_ID is not registered
     if not agent_to_unregister:
         print(
-            f"❌ 📭 Agent Engine ID '{env.agent_engine_id}' is not currently"
+            f"❌ 📭 BigQuery Agent Engine ID '{AGENT_ENGINE_ID}' is not currently"
             " registered with Agentspace"
         )
         return
 
     # Confirmation prompt
     response = input(
-        f"🤔 Unregister Agent '{agent_to_unregister.display_name}' "
-        f"with Agent Engine ID '{env.agent_engine_id}' "
-        f"from Agentspace app '{env.agentspace_app_id}'? [y/N]: "
+        f"🤔 Unregister BigQuery Agent '{agent_to_unregister.display_name}' with Agent Engine ID"
+        f" '{AGENT_ENGINE_ID}' from Agentspace app '{AGENTSPACE_APP_ID}'? [y/N]: "
     )
     if response.lower() not in ["y", "yes"]:
         print("❌ Unregister operation cancelled")
         return
 
     # Construct DELETE endpoint for the specific agent
-    delete_endpoint = f"{env.endpoint}/{agent_to_unregister.registration_id}"
+    delete_endpoint = f"{ENDPOINT}/{agent_to_unregister.registration_id}"
 
     # Unregister the agent
     try:
-        print(f"🔓 Unregistering agent {env.agent_engine_id}...")
+        print(f"🔓 Unregistering BigQuery agent {AGENT_ENGINE_ID}...")
         async with httpx.AsyncClient() as client:
             http_response = await client.delete(
                 delete_endpoint, headers=headers, timeout=30.0
             )
             http_response.raise_for_status()
             print(
-                f"✅ Agent {env.agent_engine_id} "
-                "unregistered successfully from Agentspace"
+                f"✅ BigQuery Agent {AGENT_ENGINE_ID} unregistered successfully from Agentspace"
             )
     except httpx.HTTPStatusError as err:
         print(f"❌ 🌐 HTTP error during unregister operation: {err}")
@@ -448,13 +428,192 @@ async def unregister() -> None:
     return
 
 
+async def create_authorization() -> None:
+    """Create an Authorization resource for OAuth in Agentspace.
+
+    This function creates a server-side OAuth authorization resource that can be
+    referenced by agents for OAuth authentication with external services.
+
+    Required environment variables:
+        - GOOGLE_CLOUD_PROJECT: GCP project ID
+        - AUTH_ID: Unique identifier for this authorization resource
+        - OAUTH_CLIENT_ID: OAuth client ID
+        - OAUTH_CLIENT_SECRET: OAuth client secret
+        - OAUTH_AUTH_URI: OAuth authorization endpoint
+        - OAUTH_TOKEN_URI: OAuth token endpoint
+
+    Optional environment variables:
+        - OAUTH_SCOPES: Space-separated list of OAuth scopes
+        - OAUTH_AUDIENCE: OAuth audience parameter
+        - OAUTH_PROMPT: OAuth prompt parameter (e.g., 'consent')
+        - AUTH_LOCATION: Location for authorization resource (defaults to 'global')
+
+    Raises:
+        SystemExit: If required environment variables are missing or request fails.
+    """
+    # Check for required environment variables
+    auth_id = os.getenv("AUTH_ID", "")
+    oauth_client_id = os.getenv("OAUTH_CLIENT_ID", "")
+    oauth_client_secret = os.getenv("OAUTH_CLIENT_SECRET", "")
+    oauth_auth_uri = os.getenv("OAUTH_AUTH_URI", "")
+    oauth_token_uri = os.getenv("OAUTH_TOKEN_URI", "")
+
+    if not all([auth_id, oauth_client_id, oauth_client_secret, oauth_auth_uri, oauth_token_uri]):
+        print("❌ Missing required environment variables for authorization creation:")
+        if not auth_id:
+            print("   - AUTH_ID")
+        if not oauth_client_id:
+            print("   - OAUTH_CLIENT_ID")
+        if not oauth_client_secret:
+            print("   - OAUTH_CLIENT_SECRET")
+        if not oauth_auth_uri:
+            print("   - OAUTH_AUTH_URI")
+        if not oauth_token_uri:
+            print("   - OAUTH_TOKEN_URI")
+        exit(1)
+
+    headers: dict[str, str] = setup_environment()
+
+    # Authorization resources are typically at 'global' location
+    # Allow override with AUTH_LOCATION env var
+    auth_location = os.getenv("AUTH_LOCATION", "global")
+    
+    print(f"ℹ️  Using authorization location: {auth_location}")
+    if auth_location != "global":
+        print(f"⚠️  Warning: Authorization resources are typically in 'global' location")
+        print(f"⚠️  If this fails, try setting AUTH_LOCATION=global")
+
+    # Construct the authorization endpoint
+    location_prefix = "" if auth_location == "global" else f"{auth_location}-"
+    auth_endpoint = (
+        f"https://{location_prefix}discoveryengine.googleapis.com/{API_VERSION}/"
+        f"projects/{PROJECT}/locations/{auth_location}/authorizations"
+        f"?authorizationId={auth_id}"
+    )
+
+    # Get optional OAuth parameters
+    oauth_scopes = os.getenv("OAUTH_SCOPES", "")
+    oauth_audience = os.getenv("OAUTH_AUDIENCE", "")
+    oauth_prompt = os.getenv("OAUTH_PROMPT", "")
+
+    # Build authorization URL with optional parameters
+    params = {
+        "response_type": "code",
+    }
+    
+    if oauth_audience:
+        params["audience"] = oauth_audience
+    if oauth_prompt:
+        params["prompt"] = oauth_prompt
+    if oauth_scopes:
+        params["scope"] = oauth_scopes
+
+    # Construct URL with encoded parameters
+    auth_url = f"{oauth_auth_uri}?{urlencode(params)}" if params else oauth_auth_uri
+
+    payload = {
+        "name": f"projects/{PROJECT}/locations/{auth_location}/authorizations/{auth_id}",
+        "serverSideOauth2": {
+            "clientId": oauth_client_id,
+            "clientSecret": oauth_client_secret,
+            "authorizationUri": auth_url,
+            "tokenUri": oauth_token_uri,
+        },
+    }
+
+    print(f"\n🔐 Creating Authorization resource: {auth_id}")
+    print(f"📍 Endpoint: {auth_endpoint}")
+    print(f"📦 Payload:\n{json.dumps(payload, indent=2)}\n")
+
+    # Create the authorization resource
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                auth_endpoint, headers=headers, json=payload, timeout=30.0
+            )
+            response.raise_for_status()
+            print(f"✅ Authorization resource '{auth_id}' created successfully!")
+            print(f"📄 Response:\n{json.dumps(response.json(), indent=2)}\n")
+    except httpx.HTTPStatusError as err:
+        print(f"❌ 🌐 HTTP error occurred: {err}")
+        print(f"Response content: {err.response.text}")
+        exit(1)
+    except httpx.ConnectError as err:
+        print(f"❌ 🔌 Connection error occurred: {err}")
+        exit(1)
+    except httpx.TimeoutException as err:
+        print(f"❌ ⏱️ Timeout error occurred: {err}")
+        exit(1)
+    except httpx.RequestError as err:
+        print(f"❌ ⚠️ An unexpected error occurred: {err}")
+        exit(1)
+
+
+async def delete_authorization() -> None:
+    """Delete an Authorization resource from Agentspace.
+
+    Required environment variables:
+        - GOOGLE_CLOUD_PROJECT: GCP project ID
+        - AUTH_ID: Identifier of the authorization resource to delete
+
+    Optional environment variables:
+        - AUTH_LOCATION: Location for authorization resource (defaults to 'global')
+
+    Raises:
+        SystemExit: If required environment variables are missing or request fails.
+    """
+    auth_id = os.getenv("AUTH_ID", "")
+
+    if not auth_id:
+        print("❌ Missing required environment variable: AUTH_ID")
+        exit(1)
+
+    headers: dict[str, str] = setup_environment()
+
+    # Authorization resources are typically at 'global' location
+    auth_location = os.getenv("AUTH_LOCATION", "global")
+    
+    print(f"ℹ️  Using authorization location: {auth_location}")
+
+    # Construct the authorization endpoint
+    location_prefix = "" if auth_location == "global" else f"{auth_location}-"
+    auth_endpoint = (
+        f"https://{location_prefix}discoveryengine.googleapis.com/{API_VERSION}/"
+        f"projects/{PROJECT}/locations/{auth_location}/authorizations/{auth_id}"
+    )
+
+    # Confirmation prompt
+    response = input(
+        f"🤔 Delete Authorization resource '{auth_id}' from project '{PROJECT}'? [y/N]: "
+    )
+    if response.lower() not in ["y", "yes"]:
+        print("❌ Delete authorization operation cancelled")
+        return
+
+    print(f"\n🔓 Deleting Authorization resource: {auth_id}")
+    print(f"📍 Endpoint: {auth_endpoint}\n")
+
+    # Delete the authorization resource
+    try:
+        async with httpx.AsyncClient() as client:
+            http_response = await client.delete(
+                auth_endpoint, headers=headers, timeout=30.0
+            )
+            http_response.raise_for_status()
+            print(f"✅ Authorization resource '{auth_id}' deleted successfully!")
+    except httpx.HTTPStatusError as err:
+        print(f"❌ 🌐 HTTP error occurred: {err}")
+        print(f"Response content: {err.response.text}")
+        exit(1)
+    except httpx.RequestError as err:
+        print(f"❌ ⚠️ Error during delete operation: {err}")
+        exit(1)
+
+
 async def list_agent_registrations() -> None:
     """List all agents registered with the Agentspace App."""
-    # Load and validate environment configuration
-    env = initialize_environment(RegisterEnv, print_config=False)
-
-    headers: dict[str, str] = setup_environment(env)
-    agents_data: AgentsResponse = await get_agents_data(env=env, headers=headers)
+    headers: dict[str, str] = setup_environment()
+    agents_data: AgentsResponse = await get_agents_data(headers=headers)
 
     if not agents_data.agents:
         print("📭 No agents currently registered with the Agentspace app.")
@@ -462,7 +621,7 @@ async def list_agent_registrations() -> None:
 
     print("\n📡 Raw response:\n")
     agents_data.print_raw_response()
-    print(f"\n🗂️ Agents registered with Agentspace app '{env.agentspace_app_id}':\n")
+    print(f"\n🗂️ Agents registered with Agentspace app '{AGENTSPACE_APP_ID}':\n")
     for agent in agents_data.agents:
         print(f"- Display Name:    {agent.display_name}")
         print(f"  Registration ID: {agent.registration_id}")
@@ -485,3 +644,34 @@ def main_unregister() -> None:
 def main_list() -> None:
     """Synchronous wrapper for the async list_agent_registrations function."""
     asyncio.run(list_agent_registrations())
+
+
+def main_create_authorization() -> None:
+    """Synchronous wrapper for the async create_authorization function."""
+    asyncio.run(create_authorization())
+
+
+def main_delete_authorization() -> None:
+    """Synchronous wrapper for the async delete_authorization function."""
+    asyncio.run(delete_authorization())
+
+
+if __name__ == "__main__":
+    import sys
+    
+    if len(sys.argv) > 1:
+        command = sys.argv[1].lower()
+        if command == "register":
+            main_register()
+        elif command == "unregister":
+            main_unregister()
+        elif command == "list":
+            main_list()
+        elif command == "create-auth":
+            main_create_authorization()
+        elif command == "delete-auth":
+            main_delete_authorization()
+        else:
+            print("Usage: python bigquery_agent_register.py [register|unregister|list|create-auth|delete-auth]")
+    else:
+        print("Usage: python bigquery_agent_register.py [register|unregister|list|create-auth|delete-auth]")
