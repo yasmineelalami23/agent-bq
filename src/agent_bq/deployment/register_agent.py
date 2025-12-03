@@ -181,29 +181,29 @@ async def get_agents_data(env: RegisterEnv, headers: dict[str, str]) -> AgentsRe
 
 
 async def register_authorization(env: RegisterEnv, headers: dict[str, str]) -> None:
-    print("🔐 Configuring OAuth...")
+    print("🔐 Configuring OAuth Authorization...")
 
-    # 1. Get your NEW Client Secret
     try:
+        # 1. Get your NEW Client Secret (ensure you updated your .env file!)
         client_id = os.environ["GOOGLE_CLIENT_ID"]
-        client_secret = os.environ["GOOGLE_CLIENT_SECRET"] # <--- Make sure this is the NEW one
+        client_secret = os.environ["GOOGLE_CLIENT_SECRET"]
     except KeyError:
         print("❌ Error: Missing credentials in environment variables.")
         return
 
-    # 2. Define the Scopes properly
-    # This was the missing piece causing your error!
+    # 2. Define Scopes as a LIST (This is the critical fix)
+    # The Agent Engine needs these explicitly to build the URL with 'response_type=code'
     my_scopes = [
         "https://www.googleapis.com/auth/bigquery",
         "https://www.googleapis.com/auth/userinfo.email",
         "openid"
     ]
 
-    # 3. Build the Payload
-    # We use a CLEAN url. No ?response_type=code. The server adds that.
     base_app_url = env.endpoint.rsplit("/", 1)[0]
     auth_id = "google-oauth"
-    
+
+    # 3. Build the Payload with a CLEAN URL
+    # Do NOT add parameters to authorizationUri. The engine adds them for you.
     payload = {
         "name": f"{base_app_url.split('v1alpha/')[1]}/authorizations/{auth_id}",
         "serverSideOauth2": {
@@ -211,22 +211,24 @@ async def register_authorization(env: RegisterEnv, headers: dict[str, str]) -> N
             "clientSecret": client_secret,
             "authorizationUri": "https://accounts.google.com/o/oauth2/v2/auth",
             "tokenUri": "https://oauth2.googleapis.com/token",
-            "scopes": my_scopes,  # <--- passing the list here fixes the error
+            "scopes": my_scopes,  # <--- PASSING THIS LIST FIXES THE ERROR
             "pkceEnabled": True
         }
     }
 
-    # 4. Send it to Google
+    # 4. Send the Update
     specific_auth_url = f"{base_app_url}/authorizations/{auth_id}?allowMissing=true"
     
     try:
         async with httpx.AsyncClient() as client:
-            response = await client.patch(specific_auth_url, headers=headers, json=payload, timeout=30.0)
+            response = await client.patch(
+                specific_auth_url, headers=headers, json=payload, timeout=30.0
+            )
             response.raise_for_status()
-            print("✅ Authorization updated! Try your agent now.")
+            print("✅ Authorization configuration updated successfully!")
             
     except Exception as e:
-        print(f"❌ Error updating auth: {e}")
+        print(f"❌ Failed to update auth: {e}")
 
 
 async def register() -> None:
