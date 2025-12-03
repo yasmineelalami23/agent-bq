@@ -180,45 +180,71 @@ async def get_agents_data(env: RegisterEnv, headers: dict[str, str]) -> AgentsRe
     return agents_data
 
 
-async def register_authorization(env: RegisterEnv, headers: dict[str, str]) -> None:
-    print("🔐 Configuring OAuth Authorization...")
+import os
+from urllib.parse import urlencode
+import httpx
 
+# Ensure you have these imports available in your file
+# from your_module import RegisterEnv (or wherever RegisterEnv is defined)
+
+async def register_authorization(env: RegisterEnv, headers: dict[str, str]) -> None:
+    """
+    Registers OAuth using the 'Forced URL' strategy (Adapted from Jira example).
+    Explicitly encodes response_type, scope, and access_type into the URL string.
+    """
+    print("🔐 Configuring OAuth Authorization (Jira Strategy)...")
+
+    # 1. Retrieve Credentials
     try:
-        # 1. Get your NEW Client Secret (ensure you updated your .env file!)
         client_id = os.environ["GOOGLE_CLIENT_ID"]
         client_secret = os.environ["GOOGLE_CLIENT_SECRET"]
-    except KeyError:
-        print("❌ Error: Missing credentials in environment variables.")
+    except KeyError as e:
+        print(f"❌ Missing required environment variable: {e}")
         return
 
-    # 2. Define Scopes as a LIST (This is the critical fix)
-    # The Agent Engine needs these explicitly to build the URL with 'response_type=code'
-    my_scopes = [
-        "https://www.googleapis.com/auth/bigquery",
-        "https://www.googleapis.com/auth/userinfo.email",
+    # 2. Define Scopes (Space-separated string, NOT a list)
+    # We define them as a single string because we are encoding them manually.
+    scopes_str = (
+        "https://www.googleapis.com/auth/bigquery "
+        "https://www.googleapis.com/auth/userinfo.email "
         "openid"
-    ]
+    )
 
+    # 3. Build the Authorization URL Manually
+    base_auth_url = "https://accounts.google.com/o/oauth2/v2/auth"
+    
+    # We bake all parameters into the URL to ensure 'response_type' is present.
+    # Google requires 'access_type=offline' to get a refresh token.
+    params = {
+        "access_type": "offline", 
+        "prompt": "consent",
+        "scope": scopes_str,
+        "response_type": "code", # <--- Explicitly forcing the missing parameter
+    }
+
+    # Create the full URL: .../auth?access_type=offline&scope=...&response_type=code
+    full_auth_uri = f"{base_auth_url}?{urlencode(params)}"
+
+    # 4. Construct the Payload
     base_app_url = env.endpoint.rsplit("/", 1)[0]
     auth_id = "google-oauth"
-
-    # 3. Build the Payload with a CLEAN URL
-    # Do NOT add parameters to authorizationUri. The engine adds them for you.
+    
     payload = {
         "name": f"{base_app_url.split('v1alpha/')[1]}/authorizations/{auth_id}",
         "serverSideOauth2": {
             "clientId": client_id,
             "clientSecret": client_secret,
-            "authorizationUri": "https://accounts.google.com/o/oauth2/v2/auth",
+            "authorizationUri": full_auth_uri, # We pass the FULL URL here
             "tokenUri": "https://oauth2.googleapis.com/token",
-            "scopes": my_scopes,  # <--- PASSING THIS LIST FIXES THE ERROR
             "pkceEnabled": True
-        }
+        },
     }
 
-    # 4. Send the Update
+    print(f"📦 Auth Payload Configured with URI: {full_auth_uri}")
+
+    # 5. Send Request
     specific_auth_url = f"{base_app_url}/authorizations/{auth_id}?allowMissing=true"
-    
+
     try:
         async with httpx.AsyncClient() as client:
             response = await client.patch(
@@ -227,8 +253,11 @@ async def register_authorization(env: RegisterEnv, headers: dict[str, str]) -> N
             response.raise_for_status()
             print("✅ Authorization configuration updated successfully!")
             
+    except httpx.HTTPStatusError as err:
+        print(f"❌ OAuth Configuration Failed: {err}")
+        print(f"Response content: {err.response.text}")
     except Exception as e:
-        print(f"❌ Failed to update auth: {e}")
+        print(f"❌ Unexpected error: {e}")
 
 
 async def register() -> None:
