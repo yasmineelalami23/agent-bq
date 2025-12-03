@@ -18,6 +18,7 @@ from google.auth.exceptions import DefaultCredentialsError, RefreshError
 from google.auth.transport.requests import Request
 from pydantic import BaseModel, Field
 
+
 from .config import RegisterEnv, initialize_environment
 
 
@@ -180,96 +181,118 @@ async def get_agents_data(env: RegisterEnv, headers: dict[str, str]) -> AgentsRe
     return agents_data
 
 
-import os
-from urllib.parse import urlencode
-import httpx
+
 
 # Ensure you have these imports available in your file
 # from your_module import RegisterEnv (or wherever RegisterEnv is defined)
 
-async def register_authorization(env: RegisterEnv, headers: dict[str, str]) -> None:
-    """
-    Registers OAuth using the 'Forced URL' strategy (Adapted from Jira example).
-    Explicitly encodes response_type, scope, and access_type into the URL string.
-    """
-    print("🔐 Configuring OAuth Authorization (Jira Strategy)...")
+import os
+import json
+import httpx
+from urllib.parse import urlencode
 
-    # 1. Retrieve Credentials
-    try:
-        client_id = os.environ["GOOGLE_CLIENT_ID"]
-        client_secret = os.environ["GOOGLE_CLIENT_SECRET"]
-    except KeyError as e:
-        print(f"❌ Missing required environment variable: {e}")
+# Ensure you have 'PROJECT', 'AGENTSPACE_APP_LOCATION', 'API_VERSION' defined 
+# or imported from your config/environment setup in this file.
+
+async def register_authorization(env: RegisterEnv, headers: dict[str, str]) -> None:
+    """Create or Overwrite a Google Authorization resource for BigQuery.
+    
+    Adapted from the Jira/Confluence strategy:
+    1. Checks Env Vars
+    2. Deletes existing auth if present (to avoid 409 conflict/update issues)
+    3. Creates a fresh one with 'POST'
+    """
+    
+    # 1. Check for required environment variables
+    # We use the standard Google Auth variables
+    auth_id = "google-oauth"
+    client_id = os.getenv("GOOGLE_CLIENT_ID", "")
+    client_secret = os.getenv("GOOGLE_CLIENT_SECRET", "")
+    
+    # Validation
+    if not all([client_id, client_secret]):
+        print("❌ Missing required environment variables:")
+        if not client_id: print("   - GOOGLE_CLIENT_ID")
+        if not client_secret: print("   - GOOGLE_CLIENT_SECRET")
         return
 
-    # 2. Define Scopes (Space-separated string, NOT a list)
-    # We define them as a single string because we are encoding them manually.
-    scopes_str = (
-        "https://www.googleapis.com/auth/bigquery "
-        "https://www.googleapis.com/auth/userinfo.email "
-        "openid"
+    # 2. Setup Endpoints (Project/Location level)
+    # Note: Authorizations live at Project/Location, NOT inside the Engine/Agent.
+    location_prefix = "" if env.location == "global" else f"{env.location}-"
+    
+    # Base URL for Authorizations
+    base_url = (
+        f"https://{location_prefix}discoveryengine.googleapis.com/v1alpha/"
+        f"projects/{env.project_id}/locations/{env.location}/authorizations"
     )
-
-    # 3. Build the Authorization URL Manually
-    base_auth_url = "https://accounts.google.com/o/oauth2/v2/auth"
     
-    # We bake all parameters into the URL to ensure 'response_type' is present.
-    # Google requires 'access_type=offline' to get a refresh token.
+    # Specific Resource URL (for deletion)
+    resource_url = f"{base_url}/{auth_id}"
+    
+    # Creation URL (for POST)
+    create_url = f"{base_url}?authorizationId={auth_id}"
+
+    # 3. Prepare the Manual URL (The "Jira Strategy")
+    # We manually build the URL to ensure 'response_type=code' is present.
+    scopes = "https://www.googleapis.com/auth/bigquery https://www.googleapis.com/auth/userinfo.email openid"
+    
     params = {
-        "access_type": "offline", 
+        "access_type": "offline", # Required for refresh tokens
         "prompt": "consent",
-        "scope": scopes_str,
-        "response_type": "code", # <--- Explicitly forcing the missing parameter
+        "scope": scopes,
+        "response_type": "code",  # <--- Explicitly adding the missing parameter
     }
-
-    # Create the full URL: .../auth?access_type=offline&scope=...&response_type=code
-    full_auth_uri = f"{base_auth_url}?{urlencode(params)}"
-
-    # 4. Construct the Payload
-    base_app_url = env.endpoint.rsplit("/", 1)[0]
-    auth_id = "google-oauth"
     
+    # Full URL: https://accounts.google.com/o/oauth2/v2/auth?scope=...&response_type=code...
+    full_auth_uri = f"https://accounts.google.com/o/oauth2/v2/auth?{urlencode(params)}"
+
+    # 4. Construct Payload
     payload = {
-        "name": f"{base_app_url.split('v1alpha/')[1]}/authorizations/{auth_id}",
+        "name": f"projects/{env.project_id}/locations/{env.location}/authorizations/{auth_id}",
         "serverSideOauth2": {
             "clientId": client_id,
             "clientSecret": client_secret,
-            "authorizationUri": full_auth_uri, # We pass the FULL URL here
+            "authorizationUri": full_auth_uri, # Using the manually built URL
             "tokenUri": "https://oauth2.googleapis.com/token",
             "pkceEnabled": True
         },
     }
 
-    print(f"📦 Auth Payload Configured with URI: {full_auth_uri}")
+    print(f"\n🔐 Configuring BigQuery Authorization: {auth_id}")
+    print(f"📍 Create Endpoint: {create_url}")
 
-    # 5. Send Request
-    specific_auth_url = f"{base_app_url}/authorizations/{auth_id}"
+    async with httpx.AsyncClient() as client:
+        # STEP A: Try to DELETE existing one first (Clean Slate)
+        # This prevents 409 "Already Exists" and 404 "Update failed" errors.
+        try:
+            print("🗑️  Checking for existing authorization to clean up...")
+            del_resp = await client.delete(resource_url, headers=headers, timeout=10.0)
+            if del_resp.status_code == 200:
+                print("   - Existing authorization deleted.")
+            else:
+                print(f"   - No existing authorization found (Status {del_resp.status_code}). Proceeding...")
+        except Exception:
+            print("   - Cleanup check skipped or failed. Proceeding to create.")
 
-    # This tells Google exactly which fields to overwrite.
-    # Without this, Google often ignores the change to the URL.
-    query_params = {
-        "allowMissing": "true",
-        "updateMask": "serverSideOauth2.authorizationUri,serverSideOauth2.clientId,serverSideOauth2.clientSecret,serverSideOauth2.tokenUri,serverSideOauth2.pkceEnabled"
-    }
-
-    try:
-        async with httpx.AsyncClient() as client:
-            response = await client.patch(
-                specific_auth_url, 
-                headers=headers, 
-                json=payload, 
-                params=query_params,  # <--- THIS IS WHERE YOU ADD IT
-                timeout=30.0
+        # STEP B: CREATE (POST)
+        try:
+            response = await client.post(
+                create_url, headers=headers, json=payload, timeout=30.0
             )
             response.raise_for_status()
-            print("✅ Authorization configuration updated successfully!")
-            print(f"Server response: {response.json()}") # Helpful for debugging
+            print(f"✅ Authorization resource '{auth_id}' created successfully!")
+            print(f"📄 Response Scopes count: {len(response.json().get('serverSideOauth2', {}).get('scopes', []))}")
             
-    except httpx.HTTPStatusError as err:
-        print(f"❌ OAuth Configuration Failed: {err}")
-        print(f"Response content: {err.response.text}")
-    except Exception as e:
-        print(f"❌ Unexpected error: {e}")
+        except httpx.HTTPStatusError as err:
+            print(f"❌ 🌐 HTTP error occurred: {err}")
+            print(f"Response content: {err.response.text}")
+            # If POST fails, we try PATCH as a fallback just in case
+            if err.response.status_code == 409:
+                print("⚠️  Resource exists (409). Attempting PATCH update...")
+                patch_params = {"updateMask": "serverSideOauth2.authorizationUri,serverSideOauth2.tokenUri,serverSideOauth2.clientId,serverSideOauth2.clientSecret"}
+                patch_resp = await client.patch(resource_url, headers=headers, json=payload, params=patch_params)
+                if patch_resp.status_code == 200:
+                     print("✅ Authorization UPDATED successfully via fallback!")
 
 
 async def register() -> None:
