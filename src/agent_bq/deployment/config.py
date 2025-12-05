@@ -203,17 +203,43 @@ class DeployEnv(BaseEnv):
         description="OpenTelemetry message content capture setting",
     )
 
+    oauth_client_id: str | None = Field(
+        default=None,
+        alias="OAUTH_CLIENT_ID",
+        description="OAuth client ID for BigQuery user authentication",
+    )
+
+    oauth_client_secret: str | None = Field(
+        default=None,
+        alias="OAUTH_CLIENT_SECRET",
+        description="OAuth client secret for BigQuery user authentication",
+    )
+
+    gemini_enterprise_auth_id: str | None = Field(
+        default=None,
+        alias="GEMINI_ENTERPRISE_AUTH_ID",
+        description="Auth ID key for Gemini Enterprise token in tool context state",
+    )
+
     @computed_field  # type: ignore[prop-decorator]
     @property
     def agent_env_vars(self) -> dict[str, str]:
         """Runtime environment variables for Agent Engine AdkApp."""
-        return {
+        env_vars = {
             "AGENT_NAME": self.agent_name,
             "LOG_LEVEL": self.log_level,
             "OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT": (
                 self.otel_capture_content
             ),
         }
+        # Add OAuth credentials if configured
+        if self.oauth_client_id:
+            env_vars["OAUTH_CLIENT_ID"] = self.oauth_client_id
+        if self.oauth_client_secret:
+            env_vars["OAUTH_CLIENT_SECRET"] = self.oauth_client_secret
+        if self.gemini_enterprise_auth_id:
+            env_vars["GEMINI_ENTERPRISE_AUTH_ID"] = self.gemini_enterprise_auth_id
+        return env_vars
 
     def print_config(self) -> None:
         """Print deployment configuration for user verification."""
@@ -227,9 +253,20 @@ class DeployEnv(BaseEnv):
         print(f"AGENT_DESCRIPTION:           {self.agent_description}")
         print(f"AGENT_ENGINE_ID:             {self.agent_engine_id}")
         print(f"SERVICE_ACCOUNT:             {self.service_account}")
+        oauth_id_display = "***" if self.oauth_client_id else None
+        oauth_secret_display = "***" if self.oauth_client_secret else None
+        print(f"OAUTH_CLIENT_ID:             {oauth_id_display}")
+        print(f"OAUTH_CLIENT_SECRET:         {oauth_secret_display}")
+        print(f"GEMINI_ENTERPRISE_AUTH_ID:   {self.gemini_enterprise_auth_id}")
         print("ENABLE_TRACING:              True")
         print("\n\n🤖 Environment variables set for Agent Engine AdkApp runtime:\n")
-        print(f"{json.dumps(self.agent_env_vars, indent=2)}\n\n")
+        # Mask secrets in output
+        display_env_vars = self.agent_env_vars.copy()
+        mask = "***"  # noqa: S105
+        for key in ("OAUTH_CLIENT_ID", "OAUTH_CLIENT_SECRET"):
+            if key in display_env_vars:
+                display_env_vars[key] = mask
+        print(f"{json.dumps(display_env_vars, indent=2)}\n\n")
 
 
 class DeleteEnv(BaseEnv):
