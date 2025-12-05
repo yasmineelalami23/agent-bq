@@ -32,7 +32,7 @@ os.environ["GOOGLE_CLOUD_QUOTA_PROJECT"] = PROJECT_ID
 
 oauth_client_id = os.getenv("OAUTH_CLIENT_ID")
 oauth_client_secret = os.getenv("OAUTH_CLIENT_SECRET")
-gemini_enterprise_auth_id = os.getenv("GEMINI_ENTERPRISE_AUTH_ID")
+gemini_enterprise_auth_id = os.getenv("AUTH_ID")
 
 bigquery_toolset: BigQueryToolset | GeminiEnterpriseBigQueryToolset
 
