@@ -8,7 +8,6 @@ local development.
 
 from collections.abc import Callable
 from typing import Any, cast, override
-import logging
 
 import google.auth.credentials
 import google.oauth2.credentials
@@ -28,19 +27,30 @@ from google.adk.tools.google_tool import (  # pyright: ignore[reportMissingImpor
 )
 from pydantic import BaseModel, ConfigDict
 
-# Set up logger
-logger = logging.getLogger(__name__)
 
 class GeminiEnterpriseCredentialsConfig(BaseGoogleCredentialsConfig):
-    """Credentials config with Gemini Enterprise auth ID support."""
+    """Credentials config with Gemini Enterprise auth ID support.
+
+    This extends the base Google credentials config to support fetching
+    OAuth tokens from Gemini Enterprise (Agentspace) via the tool context state.
+    """
 
     model_config = ConfigDict(arbitrary_types_allowed=True, extra="forbid")
 
     gemini_enterprise_auth_id: str | None = None
+    """The auth ID key used by Gemini Enterprise to store the access token
+    in the tool context state. When set, the credentials manager will first
+    check for this token before falling back to the standard OAuth flow."""
 
 
 class GeminiEnterpriseCredentialsManager(GoogleCredentialsManager):
-    """Credentials manager for both local and Gemini Enterprise OAuth flows."""
+    """Credentials manager for both local and Gemini Enterprise OAuth flows.
+
+    This manager first checks for an access token provided by Gemini Enterprise
+    (stored in the tool context state under the configured auth ID). If found,
+    it creates credentials from that token. Otherwise, it falls back to the
+    standard ADK OAuth flow for local development.
+    """
 
     credentials_config: GeminiEnterpriseCredentialsConfig
 
@@ -60,35 +70,15 @@ class GeminiEnterpriseCredentialsManager(GoogleCredentialsManager):
             Valid Credentials object, or None if OAuth flow is needed
         """
         auth_id = self.credentials_config.gemini_enterprise_auth_id
-        
-        logger.info(f"Checking credentials. Auth ID configured: {auth_id}")
 
         # Check for Gemini Enterprise token first
         if auth_id:
-            # Debug: Log available keys in state (masked for security) to verify mapping
-            available_keys = list(tool_context.state.keys())
-            logger.info(f"Available keys in tool_context.state: {available_keys}")
-
-            raw_token = tool_context.state.get(auth_id)
-
-            if raw_token:
-                logger.info(f"✅ Found OAuth token for ID: {auth_id}")
-                
-                # Defensive: Ensure token is a string (sometimes passed as dict or object)
-                access_token = raw_token
-                if isinstance(raw_token, dict) and "access_token" in raw_token:
-                    access_token = raw_token["access_token"]
-                
-                if not isinstance(access_token, str):
-                    logger.error(f"❌ Token found but invalid type: {type(access_token)}")
-                    # If we found something but it's wrong, failing explicitly is safer
-                    # than falling back to local auth in production
-                    return None
-
+            access_token = tool_context.state.get(auth_id)
+            if access_token:
                 return google.oauth2.credentials.Credentials(
                     token=access_token,
                     refresh_token=None,  # Gemini Enterprise handles refresh
-                    token_uri="https://oauth2.googleapis.com/token",
+                    token_uri="https://oauth2.googleapis.com/token",  # noqa: S106
                     client_id=self.credentials_config.client_id,
                     client_secret=self.credentials_config.client_secret,
                     scopes=(
@@ -97,18 +87,17 @@ class GeminiEnterpriseCredentialsManager(GoogleCredentialsManager):
                         else None
                     ),
                 )
-            else:
-                logger.warning(f"⚠️ Auth ID '{auth_id}' not found in state.")
 
-        # Fall back to standard ADK OAuth flow
-        # ONLY if we are seemingly in a local environment (no auth_id set)
-        # or if we explicitly want to allow fallback.
-        print("ℹ️  Falling back to standard credentials manager (Local/Service Account)")
+        # Fall back to standard ADK OAuth flow (for local development)
         return await super().get_valid_credentials(tool_context)
 
 
 class GeminiEnterpriseGoogleTool(GoogleTool):
-    """GoogleTool that uses GeminiEnterpriseCredentialsManager."""
+    """GoogleTool that uses GeminiEnterpriseCredentialsManager.
+
+    This subclass overrides the credentials manager instantiation to use
+    our custom manager that supports Gemini Enterprise tokens.
+    """
 
     def __init__(
         self,
@@ -117,11 +106,11 @@ class GeminiEnterpriseGoogleTool(GoogleTool):
         credentials_config: GeminiEnterpriseCredentialsConfig | None = None,
         tool_settings: BaseModel | None = None,
     ):
-        # Call FunctionTool.__init__ directly
+        # Call FunctionTool.__init__ directly to avoid GoogleTool creating
+        # the standard GoogleCredentialsManager
         FunctionTool.__init__(self, func=func)
         self._ignore_params.append("credentials")
         self._ignore_params.append("settings")
-        
         self._credentials_manager = (
             GeminiEnterpriseCredentialsManager(credentials_config)
             if credentials_config
@@ -131,7 +120,11 @@ class GeminiEnterpriseGoogleTool(GoogleTool):
 
 
 class GeminiEnterpriseBigQueryToolset(BaseToolset):
-    """BigQuery Toolset that uses Gemini Enterprise credentials manager."""
+    """BigQuery Toolset that uses Gemini Enterprise credentials manager.
+
+    This toolset creates tools that check for Gemini Enterprise OAuth tokens
+    before falling back to the standard ADK OAuth flow.
+    """
 
     def __init__(
         self,
@@ -149,10 +142,14 @@ class GeminiEnterpriseBigQueryToolset(BaseToolset):
     def _is_tool_selected(
         self, tool: BaseTool, readonly_context: ReadonlyContext | None
     ) -> bool:
+        """Check if a tool should be included based on the filter."""
         if self.tool_filter is None:
             return True
+
         if isinstance(self.tool_filter, list):
             return tool.name in self.tool_filter
+
+        # tool_filter is a ToolPredicate
         if readonly_context is None:
             return True
         return self.tool_filter(tool, readonly_context)
@@ -161,6 +158,7 @@ class GeminiEnterpriseBigQueryToolset(BaseToolset):
     async def get_tools(
         self, readonly_context: ReadonlyContext | None = None
     ) -> list[BaseTool]:
+        """Get tools from the toolset using Gemini Enterprise credentials."""
         tool_funcs: list[Callable[..., Any]] = [
             cast(Callable[..., Any], metadata_tool.get_dataset_info),
             cast(Callable[..., Any], metadata_tool.get_table_info),
@@ -171,8 +169,6 @@ class GeminiEnterpriseBigQueryToolset(BaseToolset):
             cast(Callable[..., Any], query_tool.analyze_contribution),
             cast(Callable[..., Any], data_insights_tool.ask_data_insights),
         ]
-        
-        # Create tools with the custom credentials config
         all_tools: list[BaseTool] = [
             GeminiEnterpriseGoogleTool(
                 func=func,
@@ -188,4 +184,5 @@ class GeminiEnterpriseBigQueryToolset(BaseToolset):
 
     @override
     async def close(self) -> None:
+        """Clean up resources."""
         pass
