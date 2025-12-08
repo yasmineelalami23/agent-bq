@@ -64,8 +64,13 @@ jobs:
           AGENT_ENGINE_ID: ${{ vars.AGENT_ENGINE_ID }}
           LOG_LEVEL: ${{ vars.LOG_LEVEL }}
           OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT: ${{ vars.OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT }}
-          OANDA_ACCOUNT_ID: ${{ secrets.OANDA_ACCOUNT_ID }} # Use secrets if it is sensitive
+          OANDA_ACCOUNT_ID: ${{ secrets.OANDA_ACCOUNT_ID }}
           OANDA_API_KEY: ${{ secrets.OANDA_API_KEY }}
+          GEMINI_ENTERPRISE_AUTH_ID: ${{ secrets.GEMINI_ENTERPRISE_AUTH_ID }}
+          OAUTH_CLIENT_ID: ${{ secrets.OAUTH_CLIENT_ID }}
+          OAUTH_CLIENT_SECRET: ${{ secrets.OAUTH_CLIENT_SECRET }}
+          OAUTH_AUTH_URI: ${{ secrets.OAUTH_AUTH_URI }}
+          OAUTH_TOKEN_URI: ${{ secrets.OAUTH_TOKEN_URI }}
 
       - name: Register with Agentspace
         id: register-agentspace
@@ -89,6 +94,11 @@ jobs:
           AGENTSPACE_APP_ID: ${{ vars.AGENTSPACE_APP_ID }}
           AGENTSPACE_APP_LOCATION: ${{ vars.AGENTSPACE_APP_LOCATION }}
           GCP_ACCESS_TOKEN: ${{ steps.auth.outputs.access_token}}
+          GEMINI_ENTERPRISE_AUTH_ID: ${{ secrets.GEMINI_ENTERPRISE_AUTH_ID }}
+          OAUTH_CLIENT_ID: ${{ secrets.OAUTH_CLIENT_ID }}
+          OAUTH_CLIENT_SECRET: ${{ secrets.OAUTH_CLIENT_SECRET }}
+          OAUTH_AUTH_URI: ${{ secrets.OAUTH_AUTH_URI }}
+          OAUTH_TOKEN_URI: ${{ secrets.OAUTH_TOKEN_URI }}
 
 # Google Cloud Workload Identity Federation with a dedicated service account - REQUIRED to generate OAuth 2.0 tokens
 # https://cloud.google.com/iam/docs/workload-identity-federation-with-deployment-pipelines#github-actions_1
