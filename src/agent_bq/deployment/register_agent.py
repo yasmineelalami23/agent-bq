@@ -267,7 +267,7 @@ async def register() -> None:
     # Check if OAuth is configured (for external service integrations)
     oauth_client_id = os.getenv("OAUTH_CLIENT_ID", "")
     oauth_client_secret = os.getenv("OAUTH_CLIENT_SECRET", "")
-    auth_id = os.getenv("AUTH_ID", "")  # Authorization resource ID
+    auth_id = os.getenv("GEMINI_ENTERPRISE_AUTH_ID", "")  # Authorization resource ID
 
     # Prepare the Agent definition JSON Payload for BigQuery agent
     payload: dict[str, Any] = {
@@ -329,7 +329,7 @@ async def register() -> None:
         if not oauth_client_secret:
             print("   - OAUTH_CLIENT_SECRET")
         if not auth_id:
-            print("   - AUTH_ID")
+            print("   - GEMINI_ENTERPRISE_AUTH_ID")
         print("ℹ️  Agent will use service account authentication")
     else:
         print("ℹ️  OAuth not configured, agent will use service account authentication")
@@ -436,7 +436,7 @@ async def create_authorization() -> None:
 
     Required environment variables:
         - GOOGLE_CLOUD_PROJECT: GCP project ID
-        - AUTH_ID: Unique identifier for this authorization resource
+        - GEMINI_ENTERPRISE_AUTH_ID Unique identifier for this authorization resource
         - OAUTH_CLIENT_ID: OAuth client ID
         - OAUTH_CLIENT_SECRET: OAuth client secret
         - OAUTH_AUTH_URI: OAuth authorization endpoint
@@ -452,7 +452,7 @@ async def create_authorization() -> None:
         SystemExit: If required environment variables are missing or request fails.
     """
     # Check for required environment variables
-    auth_id = os.getenv("AUTH_ID", "")
+    auth_id = os.getenv("GEMINI_ENTERPRISE_AUTH_ID", "")
     oauth_client_id = os.getenv("OAUTH_CLIENT_ID", "")
     oauth_client_secret = os.getenv("OAUTH_CLIENT_SECRET", "")
     oauth_auth_uri = os.getenv("OAUTH_AUTH_URI", "")
@@ -461,7 +461,7 @@ async def create_authorization() -> None:
     if not all([auth_id, oauth_client_id, oauth_client_secret, oauth_auth_uri, oauth_token_uri]):
         print("❌ Missing required environment variables for authorization creation:")
         if not auth_id:
-            print("   - AUTH_ID")
+            print("   - GEMINI_ENTERPRISE_AUTH_ID")
         if not oauth_client_id:
             print("   - OAUTH_CLIENT_ID")
         if not oauth_client_secret:
@@ -566,7 +566,7 @@ async def delete_authorization() -> None:
 
     Required environment variables:
         - GOOGLE_CLOUD_PROJECT: GCP project ID
-        - AUTH_ID: Identifier of the authorization resource to delete
+        - GEMINI_ENTERPRISE_AUTH_ID: Identifier of the authorization resource to delete
 
     Optional environment variables:
         - AUTH_LOCATION: Location for authorization resource (defaults to 'global')
@@ -574,10 +574,10 @@ async def delete_authorization() -> None:
     Raises:
         SystemExit: If required environment variables are missing or request fails.
     """
-    auth_id = os.getenv("AUTH_ID", "")
+    auth_id = os.getenv("GEMINI_ENTERPRISE_AUTH_ID", "")
 
     if not auth_id:
-        print("❌ Missing required environment variable: AUTH_ID")
+        print("❌ Missing required environment variable: GEMINI_ENTERPRISE_AUTH_ID")
         exit(1)
 
     headers: dict[str, str] = setup_environment()

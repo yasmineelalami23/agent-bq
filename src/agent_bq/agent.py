@@ -32,20 +32,15 @@ os.environ["GOOGLE_CLOUD_QUOTA_PROJECT"] = PROJECT_ID
 
 oauth_client_id = os.getenv("OAUTH_CLIENT_ID")
 oauth_client_secret = os.getenv("OAUTH_CLIENT_SECRET")
-# Use AUTH_ID to match what's set during agent registration
-gemini_enterprise_auth_id = os.getenv("AUTH_ID", "bigquery-agent-auth")
-
-# Determine if we're running in Gemini Enterprise or locally
-# In Gemini Enterprise, these OAuth vars will be set during deployment
-use_oauth = bool(oauth_client_id and oauth_client_secret)
+gemini_enterprise_auth_id = os.getenv("GEMINI_ENTERPRISE_AUTH_ID")
 
 bigquery_toolset: BigQueryToolset | GeminiEnterpriseBigQueryToolset
 
-if use_oauth:
-    # Use Gemini Enterprise OAuth Flow (for production in Agentspace)
-    print("🔐 Configuring BigQuery with Gemini Enterprise OAuth support")
-    print(f"ℹ️  Authorization ID: {gemini_enterprise_auth_id}")
-    print(f"ℹ️  OAuth Client ID: {oauth_client_id}")
+if oauth_client_id and oauth_client_secret:
+    # Use Gemini Enterprise / OAuth Flow
+    print("Configuring BigQuery with OAuth support")
+    if gemini_enterprise_auth_id:
+        print(f"  Gemini Enterprise auth ID: {gemini_enterprise_auth_id}")
 
     credentials_config = GeminiEnterpriseCredentialsConfig(
         client_id=oauth_client_id,
@@ -64,8 +59,7 @@ if use_oauth:
 
 else:
     # Use service account credentials (for local development)
-    print("ℹ️  Configuring BigQuery with service account credentials (local mode)")
-    print("ℹ️  To test OAuth, set OAUTH_CLIENT_ID and OAUTH_CLIENT_SECRET env vars")
+    print("Configuring BigQuery with service account credentials")
 
     credentials, _ = google.auth.default()
 
